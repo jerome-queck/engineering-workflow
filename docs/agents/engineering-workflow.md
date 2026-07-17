@@ -11,7 +11,7 @@ node scripts/bootstrap-engineering-workflow.mjs
 node scripts/validate-engineering-workflow.mjs
 ```
 
-Bootstrap resolves the canonical GitHub tracker from `origin` and idempotently provisions the five triage labels. It preserves unrelated labels. Use `--check` for a read-only bootstrap audit. The validator checks the local workflow installation; `--root PATH` validates another clone. After remote policy exists, `--github` also audits the effective `gh` default, repository settings, labels, and protected default branch.
+Bootstrap resolves the canonical GitHub tracker from `origin` and idempotently provisions the five triage labels, squash-only merge settings, and baseline protected-default-branch policy. It preserves unrelated labels. Protection is created only when absent; an existing divergent policy is reported and never overwritten. Use `--check` for a read-only bootstrap audit. The validator checks the local workflow installation; `--root PATH` validates another clone. `--github` also audits the effective `gh` default and live repository policy.
 
 Never trust bare `gh` repository inference. Resolve once per shell and pass the result explicitly:
 

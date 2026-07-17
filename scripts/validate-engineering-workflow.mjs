@@ -5,6 +5,11 @@ import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, readlink, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  branchProtectionDrift,
+  REPOSITORY_SETTINGS,
+  WORKFLOW_LABELS,
+} from "./lib/workflow-policy.mjs";
 
 const execFile = promisify(execFileCallback);
 
@@ -20,6 +25,7 @@ const REQUIRED_FILES = [
   ".github/pull_request_template.md",
   ".github/workflows/workflow-integrity.yml",
   "scripts/lib/github-repository.mjs",
+  "scripts/lib/workflow-policy.mjs",
   "scripts/resolve-github-repo.mjs",
   "scripts/bootstrap-engineering-workflow.mjs",
   "scripts/validate-engineering-workflow.mjs",
@@ -28,13 +34,6 @@ const REQUIRED_FILES = [
 
 const PORTABLE_FILES = REQUIRED_FILES.filter((file) =>
   file !== "skills-lock.json" && !file.startsWith("tests/"));
-const REQUIRED_LABELS = [
-  "needs-triage",
-  "needs-info",
-  "ready-for-agent",
-  "ready-for-human",
-  "wontfix",
-];
 const MARKDOWN_SCAN_EXCLUSIONS = new Set([
   ".claude",
   ".git",
@@ -460,14 +459,7 @@ async function validateGithub(root, errors) {
       errors.push(`GitHub repository lookup returned ${repository.nameWithOwner}; expected ${resolved}`);
     }
 
-    const expectedSettings = {
-      hasIssuesEnabled: true,
-      squashMergeAllowed: true,
-      mergeCommitAllowed: false,
-      rebaseMergeAllowed: false,
-      deleteBranchOnMerge: true,
-    };
-    for (const [setting, expected] of Object.entries(expectedSettings)) {
+    for (const [setting, expected] of Object.entries(REPOSITORY_SETTINGS)) {
       if (repository[setting] !== expected) {
         errors.push(`GitHub repository ${resolved} has ${setting}=${repository[setting]}; expected ${expected}`);
       }
@@ -478,7 +470,7 @@ async function validateGithub(root, errors) {
       ["label", "list", "--repo", resolved, "--limit", "1000", "--json", "name"],
       root,
     )).stdout).map((label) => label.name);
-    const missingLabels = difference(REQUIRED_LABELS, labels);
+    const missingLabels = difference(WORKFLOW_LABELS.map(({ name }) => name), labels);
     if (missingLabels.length > 0) {
       errors.push(`GitHub repository ${resolved} is missing workflow labels: ${missingLabels.join(", ")}`);
     }
@@ -492,17 +484,8 @@ async function validateGithub(root, errors) {
         ["api", `repos/${resolved}/branches/${encodeURIComponent(defaultBranch)}/protection`],
         root,
       )).stdout);
-      if (!protection.required_pull_request_reviews) {
-        errors.push(`GitHub default branch ${defaultBranch} does not require pull requests`);
-      }
-
-      const statusChecks = protection.required_status_checks;
-      const contexts = new Set([
-        ...(statusChecks?.contexts ?? []),
-        ...(statusChecks?.checks ?? []).map((check) => check.context),
-      ]);
-      if (!statusChecks?.strict || !contexts.has("workflow-integrity")) {
-        errors.push(`GitHub default branch ${defaultBranch} must require strict workflow-integrity status checks`);
+      for (const detail of branchProtectionDrift(protection)) {
+        errors.push(`GitHub default branch ${defaultBranch} protection drift: ${detail}`);
       }
     }
   } catch (error) {

@@ -36,6 +36,23 @@ async function initGitRepo(name = "engineering workflow ") {
   return root;
 }
 
+function protectedMain() {
+  return {
+    required_pull_request_reviews: {
+      dismiss_stale_reviews: false,
+      require_code_owner_reviews: false,
+      required_approving_review_count: 0,
+      require_last_push_approval: false,
+    },
+    required_status_checks: { strict: true, contexts: ["workflow-integrity"], checks: [] },
+    enforce_admins: { enabled: false },
+    required_linear_history: { enabled: true },
+    allow_force_pushes: { enabled: false },
+    allow_deletions: { enabled: false },
+    required_conversation_resolution: { enabled: true },
+  };
+}
+
 async function installFakeGh(root, initialState = {}) {
   const bin = path.join(root, "fake-bin");
   const statePath = path.join(root, "gh-state.json");
@@ -47,12 +64,14 @@ async function installFakeGh(root, initialState = {}) {
       repo: "acme/target",
       defaultRepo: null,
       originFetchRepo: null,
+      defaultBranch: "main",
       hasIssuesEnabled: false,
       squashMergeAllowed: false,
       mergeCommitAllowed: true,
       rebaseMergeAllowed: true,
       deleteBranchOnMerge: false,
       labels: ["custom", "wontfix"],
+      protection: null,
       ...initialState,
     })}\n`,
   );
@@ -78,6 +97,7 @@ if (args[0] === "repo" && args[1] === "view") {
   if (args.includes("--jq")) process.stdout.write(repo + "\\n");
   else process.stdout.write(JSON.stringify({
     nameWithOwner: repo,
+    defaultBranchRef: { name: state.defaultBranch },
     hasIssuesEnabled: state.hasIssuesEnabled,
     squashMergeAllowed: state.squashMergeAllowed,
     mergeCommitAllowed: state.mergeCommitAllowed,
@@ -108,6 +128,25 @@ if (args[0] === "repo" && args[1] === "view") {
   }
   save();
   process.stdout.write("{}\\n");
+} else if (args[0] === "api" && args.some((arg) => arg.includes("/protection")) && args.includes("PUT")) {
+  const request = JSON.parse(fs.readFileSync(0, "utf8"));
+  state.protection = {
+    required_pull_request_reviews: request.required_pull_request_reviews,
+    required_status_checks: { ...request.required_status_checks, checks: [] },
+    enforce_admins: { enabled: request.enforce_admins },
+    required_linear_history: { enabled: request.required_linear_history },
+    allow_force_pushes: { enabled: request.allow_force_pushes },
+    allow_deletions: { enabled: request.allow_deletions },
+    required_conversation_resolution: { enabled: request.required_conversation_resolution },
+  };
+  save();
+  process.stdout.write(JSON.stringify(state.protection) + "\\n");
+} else if (args[0] === "api" && args[1] && args[1].includes("/protection")) {
+  if (!state.protection) {
+    process.stderr.write("gh: Branch not protected (HTTP 404)\\n");
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify(state.protection) + "\\n");
 } else {
   process.stderr.write("Unsupported fake gh call: " + args.join(" ") + "\\n");
   process.exit(2);
@@ -183,17 +222,19 @@ test("bootstrap applies five labels and repository policy idempotently with expl
   assert.equal(state.mergeCommitAllowed, false);
   assert.equal(state.rebaseMergeAllowed, false);
   assert.equal(state.deleteBranchOnMerge, true);
+  assert.deepEqual(state.protection, protectedMain());
 
   const callsAfterFirst = await readCalls(fake.logPath);
   const writes = callsAfterFirst.filter((args) =>
     (args[0] === "label" && args[1] === "create") ||
-    (args[0] === "api" && args.includes("PATCH")),
+    (args[0] === "api" && (args.includes("PATCH") || args.includes("PUT"))),
   );
-  assert.equal(writes.length, 5);
+  assert.equal(writes.length, 6);
   for (const args of writes.filter((call) => call[0] === "label")) {
     assert.deepEqual(args.slice(args.indexOf("--repo"), args.indexOf("--repo") + 2), ["--repo", "acme/target"]);
   }
   assert.ok(writes.some((args) => args.includes("repos/acme/target")));
+  assert.ok(writes.some((args) => args.includes("repos/acme/target/branches/main/protection")));
 
   const second = await run(process.execPath, [bootstrap], { cwd: root, env: fake.env });
   assert.equal(second.code, 0, second.stderr);
@@ -201,6 +242,7 @@ test("bootstrap applies five labels and repository policy idempotently with expl
   const newCalls = callsAfterSecond.slice(callsAfterFirst.length);
   assert.equal(newCalls.some((args) => args[0] === "label" && args[1] === "create"), false);
   assert.equal(newCalls.some((args) => args[0] === "api" && args.includes("PATCH")), false);
+  assert.equal(newCalls.some((args) => args[0] === "api" && args.includes("PUT")), false);
 
   const check = await run(process.execPath, [bootstrap, "--check"], { cwd: root, env: fake.env });
   assert.equal(check.code, 0, check.stderr);
@@ -222,6 +264,7 @@ test("bootstrap --check reports drift without mutating", async () => {
     args[0] === "repo" && args[1] === "set-default" && args[2] !== "--view"), false);
   assert.equal(calls.some((args) => args[0] === "label" && args[1] === "create"), false);
   assert.equal(calls.some((args) => args[0] === "api" && args.includes("PATCH")), false);
+  assert.equal(calls.some((args) => args[0] === "api" && args.includes("PUT")), false);
 });
 
 test("bootstrap routes a split origin to its push repository and audits that default", async () => {
@@ -235,6 +278,7 @@ test("bootstrap routes a split origin to its push repository and audits that def
     rebaseMergeAllowed: false,
     deleteBranchOnMerge: true,
     labels: ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"],
+    protection: protectedMain(),
   });
   await execFile("git", ["remote", "add", "origin", "https://github.com/source/template.git"], { cwd: root });
   await execFile("git", ["remote", "set-url", "--push", "origin", "git@github.com:acme/target.git"], { cwd: root });
@@ -253,6 +297,32 @@ test("bootstrap routes a split origin to its push repository and audits that def
 
   const clean = await run(process.execPath, [bootstrap, "--check"], { cwd: root, env: fake.env });
   assert.equal(clean.code, 0, clean.stderr);
+});
+
+test("bootstrap refuses to overwrite existing branch protection drift", async () => {
+  const root = await initGitRepo();
+  const existingProtection = {
+    ...protectedMain(),
+    required_status_checks: { strict: false, contexts: ["legacy-ci"], checks: [] },
+  };
+  const fake = await installFakeGh(root, {
+    defaultRepo: "acme/target",
+    hasIssuesEnabled: true,
+    squashMergeAllowed: true,
+    mergeCommitAllowed: false,
+    rebaseMergeAllowed: false,
+    deleteBranchOnMerge: true,
+    labels: ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"],
+    protection: existingProtection,
+  });
+  await execFile("git", ["remote", "add", "origin", "https://github.com/acme/target.git"], { cwd: root });
+
+  const result = await run(process.execPath, [bootstrap], { cwd: root, env: fake.env });
+
+  assert.notEqual(result.code, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /protection|status|workflow-integrity/i);
+  assert.deepEqual(JSON.parse(await readFile(fake.statePath, "utf8")).protection, existingProtection);
+  assert.equal((await readCalls(fake.logPath)).some((args) => args[0] === "api" && args.includes("PUT")), false);
 });
 
 function folderHash(files) {
@@ -278,6 +348,7 @@ async function createValidWorkflowFixture() {
     ".github/pull_request_template.md": "## Verification\n\n- [ ] Workflow validator passes.\n",
     ".github/workflows/workflow-integrity.yml": "name: workflow-integrity\n",
     "scripts/lib/github-repository.mjs": "// shared routing fixture\n",
+    "scripts/lib/workflow-policy.mjs": "// shared policy fixture\n",
     "scripts/resolve-github-repo.mjs": "// resolver fixture\n",
     "scripts/bootstrap-engineering-workflow.mjs": "// bootstrap fixture\n",
     "scripts/validate-engineering-workflow.mjs": "// validator fixture\n",

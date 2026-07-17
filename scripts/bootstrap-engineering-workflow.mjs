@@ -1,30 +1,17 @@
 #!/usr/bin/env node
 
-import { resolveGitHubRepository, run } from "./lib/github-repository.mjs";
+import { resolveGitHubRepository, run, runWithInput } from "./lib/github-repository.mjs";
+import {
+  branchProtectionDrift,
+  DEFAULT_BRANCH_PROTECTION_REQUEST,
+  REPOSITORY_API_FIELDS,
+  REPOSITORY_SETTINGS,
+  WORKFLOW_LABELS,
+} from "./lib/workflow-policy.mjs";
 
-const labels = [
-  ["needs-triage", "FBCA04", "Needs maintainer evaluation"],
-  ["needs-info", "D4C5F9", "Waiting for reporter information"],
-  ["ready-for-agent", "0E8A16", "Ready for autonomous implementation"],
-  ["ready-for-human", "1D76DB", "Requires human implementation"],
-  ["wontfix", "B60205", "Will not be actioned"],
-];
-
-const desiredSettings = {
-  hasIssuesEnabled: true,
-  squashMergeAllowed: true,
-  mergeCommitAllowed: false,
-  rebaseMergeAllowed: false,
-  deleteBranchOnMerge: true,
-};
-
-const apiFields = {
-  hasIssuesEnabled: "has_issues",
-  squashMergeAllowed: "allow_squash_merge",
-  mergeCommitAllowed: "allow_merge_commit",
-  rebaseMergeAllowed: "allow_rebase_merge",
-  deleteBranchOnMerge: "delete_branch_on_merge",
-};
+function protectionEndpoint(repository, branch) {
+  return `repos/${repository}/branches/${encodeURIComponent(branch)}/protection`;
+}
 
 async function inspect(repository) {
   let defaultRepository = null;
@@ -33,25 +20,41 @@ async function inspect(repository) {
   } catch {
     // An unset or ambiguous default is drift that apply mode can repair.
   }
-  const settings = JSON.parse(
+  const repositoryState = JSON.parse(
     await run("gh", [
       "repo",
       "view",
       repository,
       "--json",
-      Object.keys(desiredSettings).join(","),
+      [...Object.keys(REPOSITORY_SETTINGS), "defaultBranchRef"].join(","),
     ]),
   );
   const existingLabels = JSON.parse(
     await run("gh", ["label", "list", "--repo", repository, "--limit", "1000", "--json", "name"]),
   );
   const names = new Set(existingLabels.map(({ name }) => name));
+  const defaultBranch = repositoryState.defaultBranchRef?.name ?? null;
+  let protection = null;
+  let protectionMissing = false;
+  if (defaultBranch) {
+    try {
+      protection = JSON.parse(await run("gh", ["api", protectionEndpoint(repository, defaultBranch)]));
+    } catch (error) {
+      const detail = `${error.stderr ?? ""}\n${error.message}`;
+      if (/Branch not protected|HTTP 404/i.test(detail)) protectionMissing = true;
+      else throw error;
+    }
+  }
   return {
     defaultRepository,
     defaultDrift: defaultRepository !== repository,
-    settings,
-    missingLabels: labels.filter(([name]) => !names.has(name)),
-    settingsDrift: Object.entries(desiredSettings).filter(([name, value]) => settings[name] !== value),
+    defaultBranch,
+    protectionMissing,
+    protectionDrift: protection ? branchProtectionDrift(protection) : [],
+    settings: repositoryState,
+    missingLabels: WORKFLOW_LABELS.filter(({ name }) => !names.has(name)),
+    settingsDrift: Object.entries(REPOSITORY_SETTINGS)
+      .filter(([name, value]) => repositoryState[name] !== value),
   };
 }
 
@@ -60,9 +63,14 @@ function reportDrift(repository, state) {
   if (state.defaultDrift) {
     messages.push(`default routing: ${state.defaultRepository || "unset"}; expected ${repository}`);
   }
-  for (const [name] of state.missingLabels) messages.push(`missing label: ${name}`);
+  for (const { name } of state.missingLabels) messages.push(`missing label: ${name}`);
   for (const [name, expected] of state.settingsDrift) {
     messages.push(`setting drift: ${name}=${JSON.stringify(state.settings[name])}; expected ${expected}`);
+  }
+  if (!state.defaultBranch) messages.push("default branch is missing");
+  else if (state.protectionMissing) messages.push(`branch protection missing on ${state.defaultBranch}`);
+  for (const detail of state.protectionDrift) {
+    messages.push(`branch protection drift on ${state.defaultBranch}: ${detail}`);
   }
   if (messages.length) {
     process.stderr.write(`Workflow bootstrap drift for ${repository}:\n- ${messages.join("\n- ")}\n`);
@@ -74,11 +82,12 @@ async function apply(repository, state) {
   await run("gh", ["repo", "set-default", repository]);
 
   if (state.settingsDrift.length) {
-    const fields = Object.entries(desiredSettings).flatMap(([name, value]) => ["-F", `${apiFields[name]}=${value}`]);
+    const fields = Object.entries(REPOSITORY_SETTINGS)
+      .flatMap(([name, value]) => ["-F", `${REPOSITORY_API_FIELDS[name]}=${value}`]);
     await run("gh", ["api", "--method", "PATCH", `repos/${repository}`, ...fields]);
   }
 
-  for (const [name, color, description] of state.missingLabels) {
+  for (const { name, color, description } of state.missingLabels) {
     await run("gh", [
       "label",
       "create",
@@ -90,6 +99,14 @@ async function apply(repository, state) {
       "--description",
       description,
     ]);
+  }
+
+  if (state.protectionMissing && state.defaultBranch) {
+    await runWithInput(
+      "gh",
+      ["api", "--method", "PUT", protectionEndpoint(repository, state.defaultBranch), "--input", "-"],
+      `${JSON.stringify(DEFAULT_BRANCH_PROTECTION_REQUEST)}\n`,
+    );
   }
 }
 

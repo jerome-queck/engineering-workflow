@@ -8,7 +8,7 @@ Resolve the target once per shell, then pass it to every `gh` command:
 REPO="$(node scripts/resolve-github-repo.mjs)"
 ```
 
-After cloning, provision the canonical triage labels idempotently with `node scripts/bootstrap-engineering-workflow.mjs`. Use `--check` for a read-only audit.
+After cloning, provision the canonical labels and repository policy idempotently with `node scripts/bootstrap-engineering-workflow.mjs`. Protection is created only when absent; existing protection is audited, never overwritten. Use `--check` for a read-only audit.
 
 ## Conventions
 

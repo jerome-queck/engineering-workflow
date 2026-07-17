@@ -15,7 +15,7 @@ node scripts/validate-engineering-workflow.mjs
 node scripts/validate-engineering-workflow.mjs --github
 ```
 
-Bootstrap resolves the target from `origin` and configures the repository prerequisites. Offline validation checks the portable files; `--github` additionally audits live routing, labels, merge settings, and default-branch protection. Both commands remain owner-, repository-, and filesystem-path independent. Re-run validation after every workflow or skill update.
+Bootstrap resolves the target from `origin`, configures labels and merge settings, and creates the baseline default-branch protection only when protection is absent. It refuses to overwrite an existing policy that differs. Offline validation checks the portable files; `--github` additionally audits live routing and repository policy. Both commands remain owner-, repository-, and filesystem-path independent. Re-run validation after every workflow or skill update.
 
 ## Full workflow
 
