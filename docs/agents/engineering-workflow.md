@@ -11,7 +11,9 @@ node scripts/bootstrap-engineering-workflow.mjs
 node scripts/validate-engineering-workflow.mjs
 ```
 
-Bootstrap resolves the canonical GitHub tracker from `origin` and idempotently provisions the five triage labels, squash-only merge settings, and baseline protected-default-branch policy. It preserves unrelated labels. Protection uses an atomic create-only precondition; an existing or concurrently created policy is reported and never overwritten. Use `--check` for a read-only bootstrap audit. The validator checks the local workflow installation; `--root PATH` validates another clone. `--github` also audits the effective `gh` default and live repository policy.
+Bootstrap resolves the canonical GitHub tracker from `origin` and idempotently provisions the five triage labels and squash-only merge settings. It preserves unrelated labels. Protection is audit-only because GitHub documents no create-only branch-protection operation; bootstrap never writes or overwrites it. Use `--check` for a fully read-only audit. The validator checks the local workflow installation; `--root PATH` validates another clone. `--github` also audits the effective `gh` default and live repository policy.
+
+For a new repository, let `workflow-integrity` run once, then open GitHub **Settings → Branches** and add a classic rule for the default branch. Require pull requests, status checks and up-to-date branches, selecting `workflow-integrity`; require linear history and conversation resolution; disable force pushes and branch deletion; leave administrator enforcement off for emergency bypass. Re-run bootstrap and `node scripts/validate-engineering-workflow.mjs --github`. Existing divergent protection is reported for maintainer reconciliation, never changed automatically.
 
 Never trust bare `gh` repository inference. Resolve once per shell and pass the result explicitly:
 

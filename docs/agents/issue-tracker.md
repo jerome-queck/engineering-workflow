@@ -8,7 +8,7 @@ Resolve the target once per shell, then pass it to every `gh` command:
 REPO="$(node scripts/resolve-github-repo.mjs)"
 ```
 
-After cloning, provision the canonical labels and repository policy idempotently with `node scripts/bootstrap-engineering-workflow.mjs`. Protection uses atomic create-only semantics; existing or concurrently created protection is audited, never overwritten. Use `--check` for a read-only audit.
+After cloning, provision the canonical labels and merge policy idempotently with `node scripts/bootstrap-engineering-workflow.mjs`. Branch protection is audit-only and never overwritten; follow the [manual protection gate](engineering-workflow.md#bootstrap-each-clone) if it is missing. Use `--check` for a read-only audit.
 
 ## Conventions
 

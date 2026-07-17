@@ -24,28 +24,6 @@ export const REPOSITORY_API_FIELDS = Object.freeze({
 
 export const REQUIRED_STATUS_CHECK = "workflow-integrity";
 
-export const DEFAULT_BRANCH_PROTECTION_REQUEST = Object.freeze({
-  required_status_checks: Object.freeze({
-    strict: true,
-    contexts: Object.freeze([REQUIRED_STATUS_CHECK]),
-  }),
-  enforce_admins: false,
-  required_pull_request_reviews: Object.freeze({
-    dismiss_stale_reviews: false,
-    require_code_owner_reviews: false,
-    required_approving_review_count: 0,
-    require_last_push_approval: false,
-  }),
-  restrictions: null,
-  required_linear_history: true,
-  allow_force_pushes: false,
-  allow_deletions: false,
-  block_creations: false,
-  required_conversation_resolution: true,
-  lock_branch: false,
-  allow_fork_syncing: true,
-});
-
 function enabled(value) {
   return typeof value === "boolean" ? value : value?.enabled;
 }

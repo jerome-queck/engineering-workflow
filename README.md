@@ -15,7 +15,9 @@ node scripts/validate-engineering-workflow.mjs
 node scripts/validate-engineering-workflow.mjs --github
 ```
 
-Bootstrap resolves the target from `origin`, configures labels and merge settings, and atomically creates baseline default-branch protection only when protection is absent. It refuses to overwrite an existing or concurrently created policy. Offline validation checks the portable files; `--github` additionally audits live routing and repository policy. Both commands remain owner-, repository-, and filesystem-path independent. Re-run validation after every workflow or skill update.
+Bootstrap resolves the target from `origin` and configures labels and merge settings. It audits but never writes branch protection, so existing repository policy cannot be overwritten. If protection is missing, let `workflow-integrity` run once, then add a classic default-branch rule in GitHub **Settings → Branches**: require pull requests, strict `workflow-integrity`, linear history, and conversation resolution; block force pushes and deletion; leave administrator enforcement off for emergency bypass. Re-run bootstrap and `--github` afterward.
+
+Offline validation checks the portable files; `--github` additionally audits live routing and repository policy. Both commands remain owner-, repository-, and filesystem-path independent. Re-run validation after every workflow or skill update.
 
 ## Full workflow
 

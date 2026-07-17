@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
-import { resolveGitHubRepository, run, runWithInput } from "./lib/github-repository.mjs";
+import { resolveGitHubRepository, run } from "./lib/github-repository.mjs";
 import {
   branchProtectionDrift,
-  DEFAULT_BRANCH_PROTECTION_REQUEST,
   REPOSITORY_API_FIELDS,
   REPOSITORY_SETTINGS,
   WORKFLOW_LABELS,
@@ -68,7 +67,11 @@ function reportDrift(repository, state) {
     messages.push(`setting drift: ${name}=${JSON.stringify(state.settings[name])}; expected ${expected}`);
   }
   if (!state.defaultBranch) messages.push("default branch is missing");
-  else if (state.protectionMissing) messages.push(`branch protection missing on ${state.defaultBranch}`);
+  else if (state.protectionMissing) {
+    messages.push(
+      `branch protection missing on ${state.defaultBranch}; configure it in GitHub Settings > Branches, then rerun bootstrap`,
+    );
+  }
   for (const detail of state.protectionDrift) {
     messages.push(`branch protection drift on ${state.defaultBranch}: ${detail}`);
   }
@@ -101,29 +104,6 @@ async function apply(repository, state) {
     ]);
   }
 
-  if (state.protectionMissing && state.defaultBranch) {
-    try {
-      await runWithInput(
-        "gh",
-        [
-          "api",
-          "--method",
-          "PUT",
-          protectionEndpoint(repository, state.defaultBranch),
-          "-H",
-          "If-None-Match: *",
-          "--input",
-          "-",
-        ],
-        `${JSON.stringify(DEFAULT_BRANCH_PROTECTION_REQUEST)}\n`,
-      );
-    } catch (error) {
-      if (/HTTP 412/i.test(`${error.stderr ?? ""}\n${error.message}`)) {
-        throw new Error("Branch protection appeared concurrently and was not overwritten; re-run bootstrap to audit it.");
-      }
-      throw error;
-    }
-  }
 }
 
 async function main() {
