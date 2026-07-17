@@ -12,4 +12,11 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-Edit the right-hand column to match whatever vocabulary you actually use.
+Provision or audit these labels on the clone's `origin` repository:
+
+```sh
+node scripts/bootstrap-engineering-workflow.mjs
+node scripts/bootstrap-engineering-workflow.mjs --check
+```
+
+Bootstrap preserves unrelated labels. Keep this five-label mapping, bootstrap, and validator in sync; do not add project labels to the canonical triage vocabulary.
