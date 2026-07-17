@@ -102,11 +102,27 @@ async function apply(repository, state) {
   }
 
   if (state.protectionMissing && state.defaultBranch) {
-    await runWithInput(
-      "gh",
-      ["api", "--method", "PUT", protectionEndpoint(repository, state.defaultBranch), "--input", "-"],
-      `${JSON.stringify(DEFAULT_BRANCH_PROTECTION_REQUEST)}\n`,
-    );
+    try {
+      await runWithInput(
+        "gh",
+        [
+          "api",
+          "--method",
+          "PUT",
+          protectionEndpoint(repository, state.defaultBranch),
+          "-H",
+          "If-None-Match: *",
+          "--input",
+          "-",
+        ],
+        `${JSON.stringify(DEFAULT_BRANCH_PROTECTION_REQUEST)}\n`,
+      );
+    } catch (error) {
+      if (/HTTP 412/i.test(`${error.stderr ?? ""}\n${error.message}`)) {
+        throw new Error("Branch protection appeared concurrently and was not overwritten; re-run bootstrap to audit it.");
+      }
+      throw error;
+    }
   }
 }
 

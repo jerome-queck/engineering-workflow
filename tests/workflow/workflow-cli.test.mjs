@@ -72,6 +72,7 @@ async function installFakeGh(root, initialState = {}) {
       deleteBranchOnMerge: false,
       labels: ["custom", "wontfix"],
       protection: null,
+      protectionAppearsOnPut: null,
       ...initialState,
     })}\n`,
   );
@@ -129,6 +130,16 @@ if (args[0] === "repo" && args[1] === "view") {
   save();
   process.stdout.write("{}\\n");
 } else if (args[0] === "api" && args.some((arg) => arg.includes("/protection")) && args.includes("PUT")) {
+  if (!args.includes("If-None-Match: *")) {
+    process.stderr.write("missing atomic create-only precondition\\n");
+    process.exit(2);
+  }
+  if (state.protection || state.protectionAppearsOnPut) {
+    if (state.protectionAppearsOnPut) state.protection = state.protectionAppearsOnPut;
+    save();
+    process.stderr.write("gh: HTTP 412\\n");
+    process.exit(1);
+  }
   const request = JSON.parse(fs.readFileSync(0, "utf8"));
   state.protection = {
     required_pull_request_reviews: request.required_pull_request_reviews,
@@ -234,7 +245,9 @@ test("bootstrap applies five labels and repository policy idempotently with expl
     assert.deepEqual(args.slice(args.indexOf("--repo"), args.indexOf("--repo") + 2), ["--repo", "acme/target"]);
   }
   assert.ok(writes.some((args) => args.includes("repos/acme/target")));
-  assert.ok(writes.some((args) => args.includes("repos/acme/target/branches/main/protection")));
+  const protectionWrite = writes.find((args) => args.includes("repos/acme/target/branches/main/protection"));
+  assert.ok(protectionWrite);
+  assert.ok(protectionWrite.includes("If-None-Match: *"));
 
   const second = await run(process.execPath, [bootstrap], { cwd: root, env: fake.env });
   assert.equal(second.code, 0, second.stderr);
@@ -323,6 +336,31 @@ test("bootstrap refuses to overwrite existing branch protection drift", async ()
   assert.match(`${result.stdout}\n${result.stderr}`, /protection|status|workflow-integrity/i);
   assert.deepEqual(JSON.parse(await readFile(fake.statePath, "utf8")).protection, existingProtection);
   assert.equal((await readCalls(fake.logPath)).some((args) => args[0] === "api" && args.includes("PUT")), false);
+});
+
+test("bootstrap atomically refuses protection created after inspection", async () => {
+  const root = await initGitRepo();
+  const racingProtection = {
+    ...protectedMain(),
+    required_status_checks: { strict: true, contexts: ["other-ci"], checks: [] },
+  };
+  const fake = await installFakeGh(root, {
+    defaultRepo: "acme/target",
+    hasIssuesEnabled: true,
+    squashMergeAllowed: true,
+    mergeCommitAllowed: false,
+    rebaseMergeAllowed: false,
+    deleteBranchOnMerge: true,
+    labels: ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"],
+    protectionAppearsOnPut: racingProtection,
+  });
+  await execFile("git", ["remote", "add", "origin", "https://github.com/acme/target.git"], { cwd: root });
+
+  const result = await run(process.execPath, [bootstrap], { cwd: root, env: fake.env });
+
+  assert.notEqual(result.code, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /protection|concurrent|412/i);
+  assert.deepEqual(JSON.parse(await readFile(fake.statePath, "utf8")).protection, racingProtection);
 });
 
 function folderHash(files) {
