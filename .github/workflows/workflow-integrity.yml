@@ -1,0 +1,24 @@
+name: Workflow integrity
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-integrity:
+    name: workflow-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Test workflow tooling
+        run: node --test tests/workflow/*.test.mjs
+      - name: Validate workflow installation
+        run: node scripts/validate-engineering-workflow.mjs
